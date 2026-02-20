@@ -170,20 +170,37 @@ def get_track_number_of_panel(panel):
     return 1
 
 
+def get_panel_parameter_value_by_name(tree, panel_name, param_name):
+    """
+    Searches the constructor_data tree for a specific panel by name,
+    then returns the given parameter's value_name from that panel's parameters.
+    """
+    for child in tree.get('children', []):
+        if child.get('name') == panel_name:
+            for parameter in child.get("parameters", []):
+                if isinstance(parameter, dict) and parameter.get("name", "").lower() == param_name.lower():
+                    return parameter.get("value_name")
+        else:
+            result = get_panel_parameter_value_by_name(child, panel_name, param_name)
+            if result is not None:
+                return result
+
+    return None
+
+
 def get_pull_handle_location(tree, panel) -> str:
     """
-    Looks for the pull handle location in the panel's parameters first.
-    If not found there, attempts to get it from the tree.
+    Looks for the pull handle location specific to the given panel by name.
+    Falls back to a general tree search if not found.
     """
-    logging.debug(f"get_pull_handle_location called with tree: {tree}, panel: {panel}")
-    # Try the panel first
-    val = get_panel_parameter_value(panel, PULL_HANDLE_LOCATION_PARAM_NAME)
-    if val is not None:
-        logging.debug(f"  Found pull_handle_location in panel parameters: {val}")
-        return val
+    panel_name = panel.name if hasattr(panel, 'name') else None
 
-    # Fallback to the frame parameters in the tree
-    logging.debug("  pull_handle_location not found in panel, checking tree...")
+    if panel_name:
+        val = get_panel_parameter_value_by_name(tree, panel_name, PULL_HANDLE_LOCATION_PARAM_NAME)
+        if val is not None:
+            logging.debug(f"  Found pull_handle_location for panel '{panel_name}': {val}")
+            return val.lower()
+
     val = get_frame_parameter_value(tree, PULL_HANDLE_LOCATION_PARAM_NAME)
-    logging.debug(f"get_pull_handle_location returning from tree: {val}")
+    logging.debug(f"get_pull_handle_location fallback from tree: {val}")
     return val
