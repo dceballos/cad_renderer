@@ -109,10 +109,108 @@ def get_frame_parameter_value(tree, param_name):
     return None
 
 
-def get_pull_type(tree) -> str:
+def _get_node_parameter_value(node, param_name):
+    if not isinstance(node, dict):
+        return None
+
+    for parameter in node.get("parameters", []):
+        if parameter.get("name", "").lower() == param_name.lower():
+            return parameter.get("value_name")
+
+    return None
+
+
+def _extract_panel_payload(panel):
+    if isinstance(panel, dict):
+        return panel
+
+    raw_params = getattr(panel, "raw_params", None)
+    if isinstance(raw_params, dict):
+        return raw_params
+
+    return {}
+
+
+def _extract_panel_identity(panel):
+    payload = _extract_panel_payload(panel)
+    if not payload and isinstance(panel, str):
+        return {"name": panel}
+
+    return {
+        "node_path": payload.get("node_path"),
+        "node_uuid": payload.get("node_uuid") or payload.get("uuid"),
+        "name": payload.get("name")
+    }
+
+
+def _node_matches_panel_identity(node, identity):
+    if not isinstance(node, dict):
+        return False
+
+    node_path = node.get("node_path")
+    node_uuid = node.get("node_uuid") or node.get("uuid")
+    node_name = node.get("name")
+
+    if identity.get("node_path") and node_path:
+        return str(identity["node_path"]) == str(node_path)
+
+    if identity.get("node_uuid") and node_uuid:
+        return str(identity["node_uuid"]) == str(node_uuid)
+
+    if identity.get("name"):
+        return str(identity["name"]) == str(node_name)
+
+    return False
+
+
+def _find_panel_path_in_tree(tree, panel):
+    identity = _extract_panel_identity(panel)
+    if not any(identity.values()):
+        return None
+
+    def _search(node, path):
+        if isinstance(node, list):
+            for item in node:
+                result = _search(item, path)
+                if result:
+                    return result
+            return None
+
+        if not isinstance(node, dict):
+            return None
+
+        current_path = path + [node]
+        if _node_matches_panel_identity(node, identity):
+            return current_path
+
+        for child in node.get("children", []):
+            result = _search(child, current_path)
+            if result:
+                return result
+
+        return None
+
+    return _search(tree, [])
+
+
+def get_pull_type(tree, panel=None) -> str:
     logging.debug(f"get_pull_type called with tree: {tree}")
+
+    # Prefer panel-scoped lookup (panel -> ancestors) to avoid leaking a door
+    # handle type into sibling fixed panels in multiunit/storefront trees.
+    if panel is not None:
+        panel_path = _find_panel_path_in_tree(tree, panel)
+        if panel_path:
+            for node in reversed(panel_path):
+                value = _get_node_parameter_value(node, PULL_TYPE_PARAM_NAME)
+                if value:
+                    logging.debug(f"get_pull_type returning panel-scoped value: {value}")
+                    return value
+            logging.debug("get_pull_type no panel-scoped value found")
+            return None
+
     val = get_frame_parameter_value(tree, PULL_TYPE_PARAM_NAME)
-    logging.debug(f"get_pull_type returning: {val}")
+    logging.debug(f"get_pull_type returning fallback value: {val}")
     return val
 
 
@@ -121,6 +219,10 @@ def get_panel_parameter_value(panel, param_name):
     Recursively searches the panel's 'parameters' and children for the given param_name.
     Returns the parameter's 'value_name' if found, otherwise None.
     """
+    panel_payload = _extract_panel_payload(panel)
+    if panel_payload:
+        panel = panel_payload
+
     logging.debug(f"get_panel_parameter_value called with panel: {panel}, param_name: {param_name}")
 
     if isinstance(panel, dict):
@@ -128,7 +230,9 @@ def get_panel_parameter_value(panel, param_name):
             for parameter in panel.get("parameters", []):
                 logging.debug(f"  Checking parameter: {parameter.get('name')}")
                 if parameter.get("name", "").lower() == param_name.lower():
-                    value_name = parameter.get("value_name", "").lower()
+                    value_name = parameter.get("value_name")
+                    if isinstance(value_name, str):
+                        value_name = value_name.lower()
                     logging.debug(f"  Found matching parameter! value_name: {value_name}")
                     return value_name
 
@@ -190,17 +294,32 @@ def get_panel_parameter_value_by_name(tree, panel_name, param_name):
 
 def get_pull_handle_location(tree, panel) -> str:
     """
-    Looks for the pull handle location specific to the given panel by name.
-    Falls back to a general tree search if not found.
+    Looks for pull_handle_location for a specific panel context.
+    Prefers panel-scoped lookup (panel -> ancestors), then falls back to
+    panel payload and finally to a global tree search.
     """
-    panel_name = panel.name if hasattr(panel, 'name') else None
+    logging.debug(f"get_pull_handle_location called with tree: {tree}, panel: {panel}")
 
-    if panel_name:
-        val = get_panel_parameter_value_by_name(tree, panel_name, PULL_HANDLE_LOCATION_PARAM_NAME)
-        if val is not None:
-            logging.debug(f"  Found pull_handle_location for panel '{panel_name}': {val}")
-            return val.lower()
+    # Prefer panel-scoped lookup (panel -> ancestors).
+    panel_path = _find_panel_path_in_tree(tree, panel)
+    if panel_path:
+        for node in reversed(panel_path):
+            value = _get_node_parameter_value(node, PULL_HANDLE_LOCATION_PARAM_NAME)
+            if value is not None:
+                value = value.lower() if isinstance(value, str) else value
+                logging.debug(f"  Found pull_handle_location in panel-scoped path: {value}")
+                return value
+        logging.debug("  pull_handle_location not found in panel-scoped path")
+        return None
 
+    # Legacy fallback for payloads with no panel identity.
+    val = get_panel_parameter_value(panel, PULL_HANDLE_LOCATION_PARAM_NAME)
+    if val is not None:
+        logging.debug(f"  Found pull_handle_location in panel parameters: {val}")
+        return val
+
+    logging.debug("  pull_handle_location not found in panel, checking tree...")
     val = get_frame_parameter_value(tree, PULL_HANDLE_LOCATION_PARAM_NAME)
-    logging.debug(f"get_pull_handle_location fallback from tree: {val}")
+    val = val.lower() if isinstance(val, str) else val
+    logging.debug(f"get_pull_handle_location returning from tree: {val}")
     return val

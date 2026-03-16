@@ -128,35 +128,135 @@ def find_muntin_label_offset_multipliers(raw_params):
     return max_labels_x, max_labels_y
 
 
-def get_panel_direction_from_tree(tree, panel_name):
-    for child in tree.get('children', []):
-        # Check if the child is a frame
-        if child.get('name') == panel_name:
-            for parameter in child.get("parameters", []):
-                if parameter.get("name") == PANEL_DIRECTION_PARAM_NAME:
-                    try:
-                        return parameter.get("value_name")
-                    except:
-                        pass
-        else:
-            for inner_child in tree.get('children', []):
-                direction = get_panel_direction_from_tree(inner_child, panel_name)
-                if direction:
-                    return direction
+def _extract_panel_identity(panel):
+    if isinstance(panel, str):
+        return {"name": panel}
+
+    if isinstance(panel, dict):
+        payload = panel
+    else:
+        payload = getattr(panel, 'raw_params', {}) if hasattr(panel, 'raw_params') else {}
+
+    return {
+        "node_path": payload.get("node_path"),
+        "node_uuid": payload.get("node_uuid") or payload.get("uuid"),
+        "name": payload.get("name")
+    }
+
+
+def _node_matches_panel_identity(node, identity):
+    if not isinstance(node, dict):
+        return False
+
+    node_path = node.get("node_path")
+    node_uuid = node.get("node_uuid") or node.get("uuid")
+    node_name = node.get("name")
+
+    if identity.get("node_path") and node_path:
+        return str(identity["node_path"]) == str(node_path)
+
+    if identity.get("node_uuid") and node_uuid:
+        return str(identity["node_uuid"]) == str(node_uuid)
+
+    if identity.get("name"):
+        return str(identity["name"]) == str(node_name)
+
+    return False
+
+
+def _find_panel_path(tree, panel):
+    identity = _extract_panel_identity(panel)
+    if not any(identity.values()):
+        return None
+
+    def _search(node, path):
+        if isinstance(node, list):
+            for item in node:
+                result = _search(item, path)
+                if result:
+                    return result
+            return None
+
+        if not isinstance(node, dict):
+            return None
+
+        current_path = path + [node]
+        if _node_matches_panel_identity(node, identity):
+            return current_path
+
+        for child in node.get('children', []):
+            result = _search(child, current_path)
+            if result:
+                return result
+
+        return None
+
+    return _search(tree, [])
+
+
+def _parameter_value(node, parameter_name):
+    if not isinstance(node, dict):
+        return None
+
+    for parameter in node.get("parameters", []):
+        if parameter.get("name") == parameter_name:
+            return parameter.get("value_name")
 
     return None
 
 
-def get_panel_muntin_shape_from_tree(tree, panel_name):
-    for child in tree.get('children', []):
-        # Check if the child is a frame
-        if child.get('panel_type', '') == 'panel' and child.get('name') == panel_name:
-            return child.get('muntin_shape', {})
-        else:
-            for inner_child in tree.get('children', []):
-                shape = get_panel_muntin_shape_from_tree(inner_child, panel_name)
-                if shape is not None:
-                    return shape
+def _find_node_by_name(tree, panel_name):
+    if isinstance(tree, dict):
+        if tree.get('name') == panel_name:
+            return tree
+
+        for child in tree.get('children', []):
+            result = _find_node_by_name(child, panel_name)
+            if result:
+                return result
+    elif isinstance(tree, list):
+        for item in tree:
+            result = _find_node_by_name(item, panel_name)
+            if result:
+                return result
+
+    return None
+
+
+def get_panel_direction_from_tree(tree, panel):
+    panel_path = _find_panel_path(tree, panel)
+    if panel_path:
+        for node in reversed(panel_path):
+            value = _parameter_value(node, PANEL_DIRECTION_PARAM_NAME)
+            if value:
+                return value
+        return None
+
+    # Legacy fallback
+    panel_name = panel if isinstance(panel, str) else _extract_panel_identity(panel).get("name")
+    if panel_name:
+        node = _find_node_by_name(tree, panel_name)
+        value = _parameter_value(node, PANEL_DIRECTION_PARAM_NAME) if node else None
+        if value:
+            return value
+
+    return None
+
+
+def get_panel_muntin_shape_from_tree(tree, panel):
+    panel_path = _find_panel_path(tree, panel)
+    if panel_path:
+        for node in reversed(panel_path):
+            if node.get('panel_type', '') == 'panel':
+                return node.get('muntin_shape', {})
+        return None
+
+    # Legacy fallback
+    panel_name = panel if isinstance(panel, str) else _extract_panel_identity(panel).get("name")
+    if panel_name:
+        node = _find_node_by_name(tree, panel_name)
+        if node and node.get('panel_type', '') == 'panel':
+            return node.get('muntin_shape', {})
 
     return None
 
