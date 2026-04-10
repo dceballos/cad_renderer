@@ -94,12 +94,38 @@ class Panel:
         return self.raw_params.get('constructor_data', {})
 
     @cached_property
+    def scoped_constructor_data(self):
+        """Get the constructor_data subtree for this panel's own subunit.
+        Walks up the rendering hierarchy to find the subunit frame,
+        then matches it to the correct constructor_data child by position."""
+        tree = self.constructor_data
+        children = tree.get('children', [])
+        if not children:
+            return tree
+
+        # Walk up parent chain to find the subunit-level frame
+        panel = self
+        while panel and panel.parent_panel:
+            if panel.raw_params.get('name') == 'subunit':
+                coords = panel.raw_params.get('coordinates', {})
+                x = coords.get('x')
+                if x is not None:
+                    for child in children:
+                        pos = child.get('position', {})
+                        if pos.get('x') == x and child.get('panel_type') == 'subunit':
+                            return child
+                break
+            panel = panel.parent_panel
+
+        return tree
+
+    @cached_property
     def panel_direction(self):
         return get_panel_direction_from_tree(self.constructor_data, self)
 
     @cached_property
     def pull_handle_size(self):
-        pull_type = get_pull_type(self.constructor_data, self)
+        pull_type = get_pull_type(self.scoped_constructor_data, self)
         if not pull_type:
             return ''
         elif pull_type.endswith('24"'):
@@ -113,7 +139,7 @@ class Panel:
 
     @cached_property
     def pull_handle_location(self):
-        pull_handle_location = get_pull_handle_location(self.constructor_data, self)
+        pull_handle_location = get_pull_handle_location(self.scoped_constructor_data, self)
         if pull_handle_location:
             return pull_handle_location.lower()
         else:
