@@ -5,7 +5,7 @@ from functools import cached_property
 
 import cairo
 
-from components.config import SLIDING_DOOR_PRODUCT_CATEGORY_ID, PULL_TYPE_PARAM_NAME
+from components.config import SLIDING_DOOR_PRODUCT_CATEGORY_ID, PULL_TYPE_PARAM_NAME, PULL_HANDLE_LOCATION_PARAM_NAME
 from components.helpers.arrow import Arrow
 from components.helpers.bezier import offset_bezier_curve
 from components.helpers.direction_angle import DirectionAngle
@@ -94,28 +94,30 @@ class Panel:
         return self.raw_params.get('constructor_data', {})
 
     @cached_property
-    def _subunit_coordinates(self):
-        """Walk up the rendering hierarchy to find this panel's subunit coordinates."""
+    def _scoped_constructor_subtree(self):
+        """Find the constructor_data subtree for this panel's subunit.
+        Walks up the rendering hierarchy to find the subunit frame,
+        matches by coordinates to the correct constructor_data child."""
+        tree = self.constructor_data
+        children = tree.get('children', [])
+        if not children:
+            return tree
+
+        # Walk up parent chain to find the subunit-level frame
         panel = self
         while panel:
             if panel.raw_params.get('name') == 'subunit':
-                return panel.raw_params.get('coordinates', {})
+                coords = panel.raw_params.get('coordinates', {})
+                x = coords.get('x')
+                if x is not None:
+                    for child in children:
+                        pos = child.get('position', {})
+                        if pos.get('x') == x and child.get('panel_type') in ('subunit', 'unit'):
+                            return child
+                return tree
             panel = panel.parent_panel
-        return None
 
-    def _subunit_has_param(self, param_name):
-        """Check if this panel's subunit in constructor_data has the given parameter."""
-        coords = self._subunit_coordinates
-        if not coords:
-            return True  # no subunit hierarchy, allow lookup
-
-        tree = self.constructor_data
-        for child in tree.get('children', []):
-            pos = child.get('position', {})
-            if pos.get('x') == coords.get('x') and child.get('panel_type') in ('subunit', 'unit'):
-                return get_frame_parameter_value(child, param_name) is not None
-
-        return False
+        return tree
 
     @cached_property
     def panel_direction(self):
@@ -123,9 +125,8 @@ class Panel:
 
     @cached_property
     def pull_handle_size(self):
-        if not self._subunit_has_param(PULL_TYPE_PARAM_NAME):
-            return ''
-        pull_type = get_pull_type(self.constructor_data, self)
+        subtree = self._scoped_constructor_subtree
+        pull_type = get_frame_parameter_value(subtree, PULL_TYPE_PARAM_NAME)
         if not pull_type:
             return ''
         elif pull_type.endswith('24"'):
@@ -139,11 +140,12 @@ class Panel:
 
     @cached_property
     def pull_handle_location(self):
-        if not self._subunit_has_param(PULL_TYPE_PARAM_NAME):
+        subtree = self._scoped_constructor_subtree
+        if not get_frame_parameter_value(subtree, PULL_TYPE_PARAM_NAME):
             return None
-        pull_handle_location = get_pull_handle_location(self.constructor_data, self)
-        if pull_handle_location:
-            return pull_handle_location.lower()
+        location = get_frame_parameter_value(subtree, PULL_HANDLE_LOCATION_PARAM_NAME)
+        if location:
+            return location.lower()
         else:
             return None
 
