@@ -95,11 +95,11 @@ class Panel:
 
     @cached_property
     def panel_direction(self):
-        return get_panel_direction_from_tree(self.constructor_data, self.name)
+        return get_panel_direction_from_tree(self.constructor_data, self)
 
     @cached_property
     def pull_handle_size(self):
-        pull_type = get_pull_type(self.constructor_data)
+        pull_type = get_pull_type(self.constructor_data, self)
         if not pull_type:
             return ''
         elif pull_type.endswith('24"'):
@@ -152,7 +152,7 @@ class Panel:
     @property
     def muntin_shape(self):
         try:
-            return get_panel_muntin_shape_from_tree(self.constructor_data, self.name)
+            return get_panel_muntin_shape_from_tree(self.constructor_data, self)
         except Exception:
             return None
 
