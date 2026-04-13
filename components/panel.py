@@ -554,13 +554,68 @@ class Panel:
     def _draw_panel_dlo(self):
         self.context.save()
 
-        dlo_x_offset = (self.scaled_width - self.scaled_dlo_width) / 2
-        dlo_y_offset = (self.scaled_height - self.scaled_dlo_height) / 2
+        raw_offsets = self.raw_params.get('dlo_offsets') or {}
+
+        def _to_float(value):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        horizontal_remainder = self.width - self.dlo_width
+        vertical_remainder = self.height - self.dlo_height
+
+        left = _to_float(raw_offsets.get('left'))
+        right = _to_float(raw_offsets.get('right'))
+        top = _to_float(raw_offsets.get('top'))
+        bottom = _to_float(raw_offsets.get('bottom'))
+
+        if left is None and right is None:
+            left = horizontal_remainder / 2
+            right = horizontal_remainder / 2
+        elif left is None:
+            left = horizontal_remainder - right
+        elif right is None:
+            right = horizontal_remainder - left
+
+        if top is None and bottom is None:
+            top = vertical_remainder / 2
+            bottom = vertical_remainder / 2
+        elif top is None:
+            top = vertical_remainder - bottom
+        elif bottom is None:
+            bottom = vertical_remainder - top
+
+        # Y-axis is flipped by canvas transform, so vertical origin offset
+        # corresponds to logical "bottom" DLO offset.
+        dlo_x_offset = left * self.scale_factor
+        dlo_y_offset = bottom * self.scale_factor
 
         self.context.set_source_rgba(*Colors.BLACK)
         self.context.set_line_width(0.5)
-        self.context.rectangle(self.x + dlo_x_offset, self.y + dlo_y_offset, self.scaled_dlo_width,
-                               self.scaled_dlo_height)
+        x1 = self.x + dlo_x_offset
+        y1 = self.y + dlo_y_offset
+        x2 = x1 + self.scaled_dlo_width
+        y2 = y1 + self.scaled_dlo_height
+
+        epsilon = 1e-6
+
+        # Due to flipped Y-axis, y1 is DLO bottom edge and y2 is DLO top edge.
+        if (top or 0) > epsilon:
+            self.context.move_to(x1, y2)
+            self.context.line_to(x2, y2)
+
+        if (bottom or 0) > epsilon:
+            self.context.move_to(x1, y1)
+            self.context.line_to(x2, y1)
+
+        if (left or 0) > epsilon:
+            self.context.move_to(x1, y1)
+            self.context.line_to(x1, y2)
+
+        if (right or 0) > epsilon:
+            self.context.move_to(x2, y1)
+            self.context.line_to(x2, y2)
 
         self.context.stroke()
 
